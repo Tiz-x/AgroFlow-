@@ -9,9 +9,9 @@ import userRoutes from "./routes/users";
 import contentRoutes from "./routes/content";
 import listingRoutes from './routes/listings'
 import aiRoutes from "./routes/ai";
-import chatRoutes from './routes/chat'
-import roleRoutes from './routes/role'
+import chatRoutes from './routes/chat';
 import buyerRoutes from './routes/buyers';
+import roleRoutes from './routes/role';
 
 dotenv.config();
 
@@ -22,13 +22,11 @@ app.use(cors({
   origin: function(origin, callback) {
     if (!origin) return callback(null, true)
     if (origin.startsWith('http://localhost:')) return callback(null, true)
-
     const allowedOrigins = [
       'https://ai-driven-agricultural-platform.vercel.app',
       process.env.FARMER_APP_URL,
       process.env.ADMIN_URL,
     ].filter(Boolean)
-
     if (allowedOrigins.includes(origin)) {
       callback(null, true)
     } else {
@@ -46,6 +44,7 @@ app.get("/health", (_req, res) => {
   res.json({ status: "AgroFlow+ backend is running", timestamp: new Date() });
 });
 
+// Your existing routes
 app.use("/api/auth", authRoutes);
 app.use("/api/farmers", farmerRoutes);
 app.use("/api/fields", fieldRoutes);
@@ -54,32 +53,26 @@ app.use("/api/users", userRoutes);
 app.use("/api/content", contentRoutes);
 app.use("/api/ai", aiRoutes);
 app.use('/api/listings', listingRoutes)
-app.use('/api/chat', chatRoutes)
-app.use('/api/role', roleRoutes)
+app.use('/api/chat', chatRoutes);
 app.use('/api/buyers', buyerRoutes);
-
+app.use('/api/role', roleRoutes);
 
 app.use((_req, res) => {
   res.status(404).json({ error: "Route not found" });
 });
 
-app.use(
-  (
-    err: Error,
-    _req: express.Request,
-    res: express.Response,
-    _next: express.NextFunction,
-  ) => {
-    console.error(err.stack);
-    res
-      .status(500)
-      .json({ error: "Something went wrong", message: err.message });
-  },
-);
+app.use((
+  err: Error,
+  _req: express.Request,
+  res: express.Response,
+  _next: express.NextFunction,
+) => {
+  console.error(err.stack);
+  res.status(500).json({ error: "Something went wrong", message: err.message });
+});
 
 app.listen(PORT, () => {
   console.log(`🌱 AgroFlow+ backend running on http://localhost:${PORT}`);
 });
-
 
 export default app;
