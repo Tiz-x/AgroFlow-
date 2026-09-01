@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   RiLeafFill,
@@ -17,7 +17,7 @@ import {
   RiRobot2Fill,
   RiShoppingBagLine,
 } from "react-icons/ri";
-import { MdOutlineMenu, MdClose } from "react-icons/md";
+import { MdOutlineMenu, MdClose, MdFavorite } from "react-icons/md";
 import { FaSeedling } from "react-icons/fa";
 import {
   marketService,
@@ -40,10 +40,14 @@ import { SectionSettings } from "../BuyerSellerDashboard/sections/SectionSetting
 import { SectionPostDemand } from "../BuyerSellerDashboard/sections/SectionPostDemand";
 import { SectionOrders } from "../BuyerSellerDashboard/sections/SectionOrders";
 import { SectionCart } from "../BuyerSellerDashboard/sections/SectionCart";
+import { SectionFavorites } from "../BuyerSellerDashboard/sections/SectionFavorites";
+import { SectionFollowing } from "../BuyerSellerDashboard/sections/SectionFollowing";
 import { ListingCard } from "../BuyerSellerDashboard/components/ListingCard";
 import { CROP_ICON } from "../BuyerSellerDashboard/constants";
 import { useCartStore } from "../../store/cartStore";
+import { useFavoritesStore } from "../../store/favoritesStore";
 import { LoadingButton } from "../../components/LoadingButton/LoadingButton";
+import PageLoader from "../../components/PageLoader/PageLoader";
 import styles from "./BuyerSellerDashboard.module.css";
 
 type Section =
@@ -54,7 +58,11 @@ type Section =
   | "notifications"
   | "settings"
   | "orders"
-  | "cart";
+  | "cart"
+  | "saved"
+  | "following";
+
+const SECTION_STORAGE_KEY = "buyer_section";
 
 export default function BuyerDashboard() {
   const navigate = useNavigate();
@@ -77,7 +85,22 @@ export default function BuyerDashboard() {
       .map((n: string) => n[0])
       .join("")
       .toUpperCase() ?? "BU";
-  const [section, setSection] = useState<Section>("marketplace");
+  
+  // ── Save section to sessionStorage and restore on mount ──────────────
+  const [section, setSection] = useState<Section>(() => {
+    const saved = sessionStorage.getItem(SECTION_STORAGE_KEY);
+    if (saved && ["marketplace", "buy", "matches", "waitlist", "notifications", "settings", "orders", "cart", "saved", "following"].includes(saved)) {
+      return saved as Section;
+    }
+    return "marketplace";
+  });
+
+  // ── Wrapped setSection that persists to sessionStorage ──────────────
+  const handleSetSection = (s: Section) => {
+    sessionStorage.setItem(SECTION_STORAGE_KEY, s);
+    setSection(s);
+  };
+
   const [sidebarOpen, setSidebar] = useState(false);
   const [cropFilter, setCropFilter] = useState<CropType | "All">("All");
   const [listings, setListings] = useState<Listing[]>([]);
@@ -85,6 +108,7 @@ export default function BuyerDashboard() {
   const [waitlist, setWaitlist] = useState<Demand[]>([]);
   const [notifs, setNotifs] = useState<Notification[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [followedSellers, setFollowedSellers] = useState<any[]>([]);
   const [selectedListing, setSelectedListing] = useState<Listing | null>(null);
   const [showRequestModal, setShowRequestModal] = useState<{
     listing: Listing;
@@ -102,6 +126,8 @@ export default function BuyerDashboard() {
   }>({ show: false, type: "delete" });
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [submittingRequest, setSubmittingRequest] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [newListingsCount, setNewListingsCount] = useState(0);
 
   // AI Recommendations State
   const [aiRecommendations, setAIRecommendations] = useState<any[]>([]);
@@ -109,8 +135,32 @@ export default function BuyerDashboard() {
   const [showAllRecommendations, setShowAllRecommendations] = useState(false);
   const [isMobile, setIsMobile] = useState<boolean>(false);
 
+  // ── Scroll to top ──────────────────────────────────────────────
+  const [showScrollTop, setShowScrollTop] = useState(false);
+  const contentRef = useRef<HTMLDivElement>(null);
+
   // Cart Store
   const cartCount = useCartStore((s) => s.totalItems());
+
+  // Favorites Store
+  const { listingIds, sellerIds } = useFavoritesStore();
+
+  // ── Prevent back button from closing the app ──────────────────────────
+  useEffect(() => {
+    window.history.pushState(null, '', window.location.href);
+    
+    const handlePopState = () => {
+      window.history.pushState(null, '', window.location.href);
+    };
+    
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  // Fetch followed sellers whenever sellerIds or listings change
+  useEffect(() => {
+    fetchFollowedSellers();
+  }, [sellerIds, listings]);
 
   useEffect(() => {
     const check = (): void => setIsMobile(window.innerWidth <= 768);
@@ -119,35 +169,97 @@ export default function BuyerDashboard() {
     return () => window.removeEventListener("resize", check);
   }, []);
 
-  // ── PATCH: Add polling — re-fetches listings every 30 seconds ────────────
+  // ── FIXED: Detect scroll for scroll-to-top button ──────────────────────────
   useEffect(() => {
-    refresh();
-    loadAIRecommendations();
+    let scrollTimeout: ReturnType<typeof setTimeout>;
+    let isMounted = true;
 
-    // Poll every 30 seconds — buyer sees new listings without refreshing
-    const interval = setInterval(() => {
-      refresh();
-    }, 30000);
+    const setupScrollListener = () => {
+      const el = contentRef.current;
+      if (!el) {
+        // Retry if ref isn't ready yet
+        scrollTimeout = setTimeout(setupScrollListener, 100);
+        return;
+      }
 
-    return () => clearInterval(interval);
+      const onScroll = () => {
+        if (!isMounted) return;
+        const scrollTop = el.scrollTop;
+        setShowScrollTop(scrollTop > 300);
+      };
+
+      // Check initial position
+      onScroll();
+
+      el.addEventListener("scroll", onScroll);
+      
+      // Cleanup function for this listener
+      return () => {
+        el.removeEventListener("scroll", onScroll);
+      };
+    };
+
+    const cleanup = setupScrollListener();
+
+    return () => {
+      isMounted = false;
+      clearTimeout(scrollTimeout);
+      if (typeof cleanup === 'function') {
+        cleanup();
+      }
+    };
   }, []);
 
-  async function refresh() {
+  const scrollToTop = () => {
+    contentRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  // ── INITIAL LOAD ──────────────────────────────────────────────
+  async function initialLoad() {
+    setLoading(true);
     try {
-      const [listingsData, matchesData, waitlistData, ordersData] = await Promise.all([
+      const [listingsData, matchesData, waitlistData, ordersData] = await Promise.allSettled([
         marketService.getListings(user.location),
         marketService.getMatches(),
         marketService.getWaitlist(),
         marketService.getOrders(),
       ]);
-      setListings(listingsData);
-      setMatches(matchesData);
-      setWaitlist(waitlistData);
-      setOrders(ordersData);
+      if (listingsData.status === 'fulfilled') setListings(listingsData.value);
+      if (matchesData.status === 'fulfilled') setMatches(matchesData.value);
+      if (waitlistData.status === 'fulfilled') setWaitlist(waitlistData.value);
+      if (ordersData.status === 'fulfilled') setOrders(ordersData.value);
+      setNotifs(marketService.getNotifications(user.id));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // ── SILENT BACKGROUND REFRESH ────────────────────────────────
+  async function refresh() {
+    try {
+      const [listingsData, matchesData, waitlistData, ordersData] = await Promise.allSettled([
+        marketService.getListings(user.location),
+        marketService.getMatches(),
+        marketService.getWaitlist(),
+        marketService.getOrders(),
+      ]);
+
+      if (listingsData.status === 'fulfilled') {
+        const newData = listingsData.value;
+        setListings(prev => {
+          if (newData.length > prev.length) {
+            setNewListingsCount(newData.length - prev.length);
+            setTimeout(() => setNewListingsCount(0), 4000);
+          }
+          return newData;
+        });
+      }
+      if (matchesData.status === 'fulfilled') setMatches(matchesData.value);
+      if (waitlistData.status === 'fulfilled') setWaitlist(waitlistData.value);
+      if (ordersData.status === 'fulfilled') setOrders(ordersData.value);
       setNotifs(marketService.getNotifications(user.id));
     } catch (err) {
-      console.error("Refresh error:", err);
-      addToast("Failed to refresh data", "error");
+      console.error("Silent refresh error:", err);
     }
   }
 
@@ -160,6 +272,28 @@ export default function BuyerDashboard() {
     } catch (error) {
       console.error("Error loading recommendations:", error);
     }
+  };
+
+  // Fetch followed sellers from listings with proper names
+  const fetchFollowedSellers = () => {
+    const uniqueSellers = listings.reduce((acc: any[], listing: any) => {
+      if (listing.sellerId && !acc.find((s) => s.id === listing.sellerId)) {
+        acc.push({
+          id: listing.sellerId,
+          location: listing.location || "Nigeria",
+          name: listing.sellerName || "Unknown Seller",
+          user: {
+            name: listing.sellerName || "Unknown Seller",
+            email: listing.sellerEmail || "",
+            phone: listing.sellerPhone || "",
+          },
+        });
+      }
+      return acc;
+    }, []);
+
+    const followed = uniqueSellers.filter((s) => sellerIds.includes(s.id));
+    setFollowedSellers(followed);
   };
 
   const unread = notifs.filter((n) => !n.read).length;
@@ -220,22 +354,23 @@ export default function BuyerDashboard() {
   );
 
   // Convert AI recommendations to Listing format for ListingCard
-  const aiListings: Listing[] = aiRecommendations.map((rec) => ({
-    id: rec.listingId,
-    sellerId: rec.sellerId,
-    sellerName: rec.sellerName,
-    sellerEmail: "",
-    sellerPhone: "",
-    cropType: rec.cropType,
-    quantity: rec.quantity,
-    remainingQty: rec.quantity,
-    location: rec.location,
-    description: "",
-    photoUrl: undefined,
-    status: "available",
-    createdAt: new Date().toISOString(),
-    distance: rec.distance,
-  }));
+const aiListings: Listing[] = aiRecommendations.map((rec) => ({
+  id: rec.listingId,
+  sellerId: rec.sellerId,
+  sellerName: rec.sellerName,
+  sellerEmail: "",
+  sellerPhone: "",
+  cropType: rec.cropType,
+  quantity: rec.quantity,
+  remainingQty: rec.quantity,
+  location: rec.location,
+  description: "",
+  photoUrls: rec.photoUrls || (rec.photoUrl ? [rec.photoUrl] : []),
+  status: "available",
+  createdAt: new Date().toISOString(),
+  distance: rec.distance,
+}));
+
 
   const initialCount: number = isMobile ? 2 : 3;
 
@@ -276,6 +411,18 @@ export default function BuyerDashboard() {
       badge: cartCount,
     },
     {
+      id: "saved",
+      label: "Saved",
+      icon: <MdFavorite size={15} />,
+      badge: listingIds.length,
+    },
+    {
+      id: "following",
+      label: "Following",
+      icon: <RiUserLine size={15} />,
+      badge: followedSellers.length,
+    },
+    {
       id: "notifications",
       label: "Notifications",
       icon: <RiBellLine size={15} />,
@@ -299,16 +446,30 @@ export default function BuyerDashboard() {
       badge: orders.filter((o) => o.status === "placed").length,
     },
     {
-      id: "matches",
-      label: "Matches",
-      icon: <RiCheckDoubleLine size={20} />,
-      badge: matches.length,
+      id: "saved",
+      label: "Saved",
+      icon: <MdFavorite size={20} />,
+      badge: listingIds.length,
     },
   ];
 
   const visibleRecommendations = showAllRecommendations
     ? aiListings
     : aiListings.slice(0, initialCount);
+
+  // ── Initial load + polling ──────────────────────────────────────
+  useEffect(() => {
+    initialLoad();
+    loadAIRecommendations();
+
+    const interval = setInterval(() => {
+      refresh();
+    }, 30000);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  if (loading) return <PageLoader />;
 
   return (
     <div className={styles.shell}>
@@ -362,9 +523,9 @@ export default function BuyerDashboard() {
                   borderRadius: 12,
                 }}
               >
-                {showRequestModal.listing.photoUrl ? (
+                {showRequestModal.listing.photoUrls ? (
                   <img
-                    src={showRequestModal.listing.photoUrl}
+                    src={showRequestModal.listing.photoUrls[0]}
                     alt=""
                     style={{
                       width: 60,
@@ -537,7 +698,7 @@ export default function BuyerDashboard() {
               key={item.id}
               className={`${styles.navItem} ${section === item.id ? styles.navItemActive : ""}`}
               onClick={() => {
-                setSection(item.id);
+                handleSetSection(item.id);
                 setSidebar(false);
               }}
             >
@@ -550,15 +711,6 @@ export default function BuyerDashboard() {
           ))}
         </nav>
         <div className={styles.sidebarBottom}>
-          <button
-            className={styles.sidebarBtn}
-            onClick={() => {
-              setSection("settings");
-              setSidebar(false);
-            }}
-          >
-            <RiSettings4Line size={15} /> Settings
-          </button>
           <button
             className={`${styles.sidebarBtn} ${styles.sidebarBtnDanger}`}
             onClick={handleLogout}
@@ -590,7 +742,7 @@ export default function BuyerDashboard() {
           <div className={styles.topbarRight}>
             <button
               className={styles.topbarIconBtn}
-              onClick={() => setSection("notifications")}
+              onClick={() => handleSetSection("notifications")}
             >
               <RiBellLine size={15} />
               {unread > 0 && <div className={styles.notifBadge} />}
@@ -601,9 +753,64 @@ export default function BuyerDashboard() {
           </div>
         </div>
 
-        <div className={styles.content}>
+        <div
+          ref={contentRef}
+          className={styles.content}
+          style={{ 
+            overflowY: "auto", 
+            height: "calc(100vh - 140px)",
+            paddingBottom: isMobile ? "140px" : "120px",
+            position: "relative"
+          }}
+        >
           {section === "marketplace" && (
             <>
+              {/* ── New Listings Notification ────────────────────────────────── */}
+              {newListingsCount > 0 && (
+                <div style={{
+                  position: 'fixed',
+                  top: 70,
+                  left: '50%',
+                  transform: 'translateX(-50%)',
+                  background: '#2d6a35',
+                  color: '#fff',
+                  padding: '8px 18px',
+                  borderRadius: 100,
+                  fontSize: 12,
+                  fontWeight: 700,
+                  zIndex: 100,
+                  boxShadow: '0 2px 12px rgba(0,0,0,0.2)',
+                  animation: 'fadeIn 0.3s ease',
+                  whiteSpace: 'nowrap',
+                }}>
+                  🌾 {newListingsCount} new listing{newListingsCount > 1 ? 's' : ''} available
+                </div>
+              )}
+
+              {/* ── Show AI Recommendations pill ────────────────── */}
+              {!showAIRecommendations && aiListings.length > 0 && (
+                <button
+                  onClick={() => setShowAIRecommendations(true)}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    margin: "0 16px 12px",
+                    padding: "8px 14px",
+                    borderRadius: 100,
+                    background: "#f2f9e4",
+                    border: "1.5px solid #a8d832",
+                    color: "#2d6a35",
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                  }}
+                >
+                  <RiRobot2Fill size={14} />
+                  Show AI Recommendations
+                </button>
+              )}
+
               {/* AI RECOMMENDATIONS SECTION */}
               {showAIRecommendations && aiListings.length > 0 && (
                 <div className={styles.aiRecommendationsSection}>
@@ -632,37 +839,20 @@ export default function BuyerDashboard() {
                     </button>
                   </div>
 
-                  {/* Cards */}
+                  {/* Cards - Direct ListingCard with match data */}
                   <div className={styles.marketplaceGrid}>
                     {visibleRecommendations.map((listing, index) => {
                       const rec = aiRecommendations[index];
                       return (
-                        <div key={listing.id} className={styles.aiCardWrapper}>
-                          {rec && (
-                            <>
-                              <div className={styles.aiScoreBadge}>
-                                {rec.score}% Match
-                              </div>
-                              <div className={styles.aiImageOverlay}>
-                                <div className={styles.aiReasons}>
-                                  {rec.reasons
-                                    ?.slice(0, 2)
-                                    .map((reason: string, idx: number) => (
-                                      <span key={idx} className={styles.aiReason}>
-                                        ✓ {reason}
-                                      </span>
-                                    ))}
-                                </div>
-                              </div>
-                            </>
-                          )}
-                          <ListingCard
-                            listing={listing}
-                            intent="buy"
-                            onRequestToBuy={handleRequestToBuy}
-                            onClick={handleListingClick}
-                          />
-                        </div>
+                        <ListingCard
+                          key={listing.id}
+                          listing={listing}
+                          intent="buy"
+                          onRequestToBuy={handleRequestToBuy}
+                          onClick={handleListingClick}
+                          matchScore={rec?.score}
+                          matchReasons={rec?.reasons?.slice(0, 2)}
+                        />
                       );
                     })}
                   </div>
@@ -672,7 +862,9 @@ export default function BuyerDashboard() {
                     <div className={styles.showMoreContainer}>
                       <button
                         className={styles.showMoreBtn}
-                        onClick={() => setShowAllRecommendations(!showAllRecommendations)}
+                        onClick={() =>
+                          setShowAllRecommendations(!showAllRecommendations)
+                        }
                       >
                         {showAllRecommendations
                           ? "Show Less ↑"
@@ -716,7 +908,19 @@ export default function BuyerDashboard() {
           )}
 
           {section === "cart" && (
-            <SectionCart onOrderPlaced={() => setSection("orders")} />
+            <SectionCart onOrderPlaced={() => handleSetSection("orders")} />
+          )}
+
+          {section === "saved" && (
+            <SectionFavorites
+              listings={listings}
+              onRequestToBuy={handleRequestToBuy}
+              onListingClick={setSelectedListing}
+            />
+          )}
+
+          {section === "following" && (
+            <SectionFollowing sellers={followedSellers} />
           )}
 
           {section === "notifications" && (
@@ -731,14 +935,53 @@ export default function BuyerDashboard() {
           )}
 
           {section === "settings" && (
-            <SectionSettings
-              user={user}
-              onUpdate={(updatedUser) => {
-                setUser(updatedUser);
-                refresh();
-                addToast("Profile updated successfully!", "success");
+            <>
+              <SectionSettings
+                user={user}
+                onUpdate={(updatedUser) => {
+                  setUser(updatedUser);
+                  refresh();
+                  addToast("Profile updated successfully!", "success");
+                }}
+              />
+            </>
+          )}
+
+          {/* ── FIXED: Scroll to top button ─────────────── */}
+          {showScrollTop && (
+            <button
+              onClick={scrollToTop}
+              style={{
+                position: "fixed",
+                bottom: 100,
+                right: 20,
+                width: 48,
+                height: 48,
+                borderRadius: "50%",
+                background: "#2d6a35",
+                color: "#fff",
+                border: "none",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                boxShadow: "0 4px 16px rgba(45, 106, 53, 0.4)",
+                zIndex: 9999,
+                fontSize: 22,
+                transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
               }}
-            />
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = "scale(1.1)";
+                e.currentTarget.style.boxShadow = "0 6px 24px rgba(45, 106, 53, 0.5)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = "scale(1)";
+                e.currentTarget.style.boxShadow = "0 4px 16px rgba(45, 106, 53, 0.4)";
+              }}
+              aria-label="Scroll to top"
+            >
+              ↑
+            </button>
           )}
         </div>
 
@@ -748,7 +991,7 @@ export default function BuyerDashboard() {
               <button
                 key={item.id}
                 className={`${styles.bottomNavItem} ${section === item.id ? styles.bottomNavItemActive : ""}`}
-                onClick={() => setSection(item.id as Section)}
+                onClick={() => handleSetSection(item.id as Section)}
               >
                 <div className={styles.bottomNavIcon}>
                   {item.icon}

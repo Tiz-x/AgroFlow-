@@ -302,7 +302,7 @@ async function callGroq(prompt: string): Promise<string> {
 
   const completion = await client.chat.completions.create({
     messages: [{ role: "user", content: prompt }],
-    model: "llama-3.3-70b-versatile",
+    model: "openai/gpt-oss-120b",
     temperature: 0.7,
     max_tokens: 1024,
   });
@@ -377,6 +377,7 @@ export async function processAIRequest(input: AIInput): Promise<AIResponse> {
     console.log(`   ✅ AI explanation generated`);
   } catch (err: any) {
     console.log(`   ⚠️ AI unavailable, using fallback`);
+    console.error("   ❌ Groq error:", err.message || err); // ADD THIS LINE
     aiText = getFallbackResponse(ruleResult);
     source = "fallback";
   }

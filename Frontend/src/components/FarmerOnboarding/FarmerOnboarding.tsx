@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { RiLeafFill, RiRobot2Fill, RiStore3Line, RiMicFill } from "react-icons/ri";
 import { MdPlayCircle } from "react-icons/md";
 import { BsArrowRight } from "react-icons/bs";
@@ -48,7 +48,6 @@ interface FarmerOnboardingProps {
   onComplete: () => void;
 }
 
-
 const slides = [
   {
     id: 1,
@@ -87,6 +86,29 @@ export function FarmerOnboarding({ onComplete }: FarmerOnboardingProps) {
   const [phase, setPhase] = useState<"idle" | "exit-left" | "exit-right">("idle");
 
   let touchStartX = 0;
+
+  // ── PRELOAD ALL IMAGES ──────────────────────────────────────────
+  useEffect(() => {
+    let loadedCount = 0;
+    const totalImages = slides.length;
+
+    slides.forEach((slide) => {
+      const img = new Image();
+      img.src = slide.image;
+      img.onload = () => {
+        loadedCount++;
+        if (loadedCount === totalImages) {
+          console.log("✅ All onboarding images preloaded");
+        }
+      };
+      img.onerror = () => {
+        loadedCount++;
+        if (loadedCount === totalImages) {
+          console.warn("⚠️ Some onboarding images failed to load");
+        }
+      };
+    });
+  }, []);
 
   const transition = (next: number) => {
     if (phase !== "idle") return;

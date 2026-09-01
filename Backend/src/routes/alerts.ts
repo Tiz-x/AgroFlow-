@@ -94,6 +94,18 @@ router.get('/mine', protect, async (req: AuthRequest, res: Response) => {
   }
 })
 
+// ── Ownership helpers ─────────────────────────────────────────────────
+// None of the write routes below checked who owned the field an alert hangs
+// off, so any signed-in user could raise a critical alert on a stranger's farm
+// or silently resolve alerts they had nothing to do with.
+async function callerFarmerId(userId: string): Promise<string | null> {
+  const farmer = await prisma.farmer.findUnique({
+    where:  { userId },
+    select: { id: true },
+  })
+  return farmer?.id ?? null
+}
+
 router.post('/', protect, async (req: AuthRequest, res: Response) => {
   try {
     const { fieldId, type, severity } = req.body
@@ -109,8 +121,25 @@ router.post('/', protect, async (req: AuthRequest, res: Response) => {
       return
     }
 
+    // An unknown fieldId used to fail as an opaque foreign-key 500.
+    const field = await prisma.field.findUnique({
+      where:  { id: String(fieldId) },
+      select: { id: true, farmerId: true },
+    })
+
+    if (!field) {
+      res.status(404).json({ error: 'Field not found' })
+      return
+    }
+
+    const isAdmin = req.user!.role === 'admin'
+    if (!isAdmin && (await callerFarmerId(req.user!.id)) !== field.farmerId) {
+      res.status(403).json({ error: 'You do not have access to this field' })
+      return
+    }
+
     const alert = await prisma.alert.create({
-      data: { fieldId, type, severity },
+      data: { fieldId: field.id, type, severity },
     })
 
     res.status(201).json({ message: 'Alert created', alert })
@@ -120,10 +149,38 @@ router.post('/', protect, async (req: AuthRequest, res: Response) => {
   }
 })
 
+/**
+ * Shared guard for the resolve/unresolve routes. Returns the alert when the
+ * caller owns the field it belongs to (or is an admin), otherwise writes the
+ * response and returns null.
+ */
+async function loadOwnedAlert(req: AuthRequest, res: Response) {
+  const alert = await prisma.alert.findUnique({
+    where:   { id: String(req.params.id) },
+    include: { field: { select: { farmerId: true } } },
+  })
+
+  if (!alert) {
+    res.status(404).json({ error: 'Alert not found' })
+    return null
+  }
+
+  const isAdmin = req.user!.role === 'admin'
+  if (!isAdmin && (await callerFarmerId(req.user!.id)) !== alert.field.farmerId) {
+    res.status(403).json({ error: 'You do not have access to this alert' })
+    return null
+  }
+
+  return alert
+}
+
 router.patch('/:id/resolve', protect, async (req: AuthRequest, res: Response) => {
   try {
+    const owned = await loadOwnedAlert(req, res)
+    if (!owned) return
+
     const alert = await prisma.alert.update({
-      where: { id: String(req.params.id) },
+      where: { id: owned.id },
       data: {
         resolved:   true,
         resolvedAt: new Date(),
@@ -139,8 +196,11 @@ router.patch('/:id/resolve', protect, async (req: AuthRequest, res: Response) =>
 
 router.patch('/:id/unresolve', protect, async (req: AuthRequest, res: Response) => {
   try {
+    const owned = await loadOwnedAlert(req, res)
+    if (!owned) return
+
     const alert = await prisma.alert.update({
-      where: { id: String(req.params.id) },
+      where: { id: owned.id },
       data: {
         resolved:   false,
         resolvedAt: null,

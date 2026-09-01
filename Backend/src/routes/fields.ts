@@ -119,6 +119,21 @@ router.get('/:id', protect, async (req: AuthRequest, res: Response) => {
       return
     }
 
+    // Any signed-in user could read any field by id, including the owning
+    // farmer's email and phone number. Restrict to the owner and admins.
+    const farmer = await prisma.farmer.findUnique({
+      where:  { userId: req.user!.id },
+      select: { id: true },
+    })
+
+    const isOwner = farmer?.id === field.farmerId
+    const isAdmin = req.user!.role === 'admin'
+
+    if (!isOwner && !isAdmin) {
+      res.status(403).json({ error: 'You do not have access to this field' })
+      return
+    }
+
     res.json({ field })
   } catch (error) {
     console.error('Get field error:', error)
@@ -141,6 +156,14 @@ router.post('/', protect, async (req: AuthRequest, res: Response) => {
       return
     }
 
+    // `parseFloat` on a non-numeric string yields NaN, which Prisma rejects
+    // with an opaque 500. A negative or zero area is meaningless too.
+    const parsedArea = parseFloat(area)
+    if (!Number.isFinite(parsedArea) || parsedArea <= 0) {
+      res.status(400).json({ error: 'Area must be a number greater than zero' })
+      return
+    }
+
     const farmer = await prisma.farmer.findUnique({
       where: { userId: req.user!.id },
     })
@@ -155,7 +178,7 @@ router.post('/', protect, async (req: AuthRequest, res: Response) => {
         farmerId:     farmer.id,
         location,
         crop,
-        area:         parseFloat(area),
+        area:         parsedArea,
         ndvi:         0,
         soilMoisture: 0,
       },
@@ -171,15 +194,80 @@ router.post('/', protect, async (req: AuthRequest, res: Response) => {
 router.patch('/:id', protect, async (req: AuthRequest, res: Response) => {
   try {
     const { ndvi, soilMoisture, lastIrrigation, status } = req.body
+    const fieldId = String(req.params.id)
+
+    // This route had no ownership check at all: any signed-in user could
+    // rewrite any farmer's NDVI, soil moisture and status by guessing an id.
+    const existing = await prisma.field.findUnique({
+      where:  { id: fieldId },
+      select: { id: true, farmerId: true },
+    })
+
+    if (!existing) {
+      res.status(404).json({ error: 'Field not found' })
+      return
+    }
+
+    const farmer = await prisma.farmer.findUnique({
+      where:  { userId: req.user!.id },
+      select: { id: true },
+    })
+
+    const isOwner = farmer?.id === existing.farmerId
+    const isAdmin = req.user!.role === 'admin'
+
+    if (!isOwner && !isAdmin) {
+      res.status(403).json({ error: 'You do not have access to this field' })
+      return
+    }
+
+    // Every numeric field was passed straight to parseFloat, so a bad value
+    // became NaN and surfaced as a 500 instead of a clear validation error.
+    const data: Record<string, unknown> = {}
+
+    if (ndvi !== undefined) {
+      const parsed = parseFloat(ndvi)
+      if (!Number.isFinite(parsed) || parsed < -1 || parsed > 1) {
+        res.status(400).json({ error: 'NDVI must be a number between -1 and 1' })
+        return
+      }
+      data.ndvi = parsed
+    }
+
+    if (soilMoisture !== undefined) {
+      const parsed = parseFloat(soilMoisture)
+      if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100) {
+        res.status(400).json({ error: 'Soil moisture must be a number between 0 and 100' })
+        return
+      }
+      data.soilMoisture = parsed
+    }
+
+    if (lastIrrigation !== undefined) {
+      const parsed = new Date(lastIrrigation)
+      if (Number.isNaN(parsed.getTime())) {
+        res.status(400).json({ error: 'Last irrigation must be a valid date' })
+        return
+      }
+      data.lastIrrigation = parsed
+    }
+
+    if (status !== undefined) {
+      if (!['active', 'suspended'].includes(status)) {
+        res.status(400).json({ error: 'Status must be active or suspended' })
+        return
+      }
+      data.status = status
+    }
+
+    if (Object.keys(data).length === 0) {
+      res.status(400).json({ error: 'No valid fields to update' })
+      return
+    }
 
     const field = await prisma.field.update({
-      where: { id: String(req.params.id) },
-      data: {
-        ...(ndvi           !== undefined && { ndvi:           parseFloat(ndvi)         }),
-        ...(soilMoisture   !== undefined && { soilMoisture:   parseFloat(soilMoisture) }),
-        ...(lastIrrigation !== undefined && { lastIrrigation: new Date(lastIrrigation) }),
-        ...(status         !== undefined && { status                                   }),
-      },
+      where: { id: fieldId },
+      data,
     })
 
     res.json({ message: 'Field updated successfully', field })

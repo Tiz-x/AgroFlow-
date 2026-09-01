@@ -9,21 +9,39 @@ import { authService, getContentImages } from '../../services/authService'
 import type { UserRole } from '../../types/auth'
 import styles from '../../styles/auth.module.css'
 
-// ── Email domain validation ───────────────────────────────
-function isValidEmail(email: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[a-zA-Z]{2,}$/.test(email)
+// ── Identifier validation (email or phone) ───────────────
+function isValidIdentifier(value: string): boolean {
+  const isEmail = /^[^\s@]+@[^\s@]+\.[a-zA-Z]{2,}$/.test(value)
+  const isPhone = /^(\+234|0)[789]\d{9}$/.test(value.replace(/\s+/g, ''))
+  return isEmail || isPhone
+}
+
+// ── User-friendly error messages ──────────────────────────
+function getUserFriendlyError(error: unknown): string {
+  // Network errors
+  if (error instanceof TypeError && error.message === 'Failed to fetch') {
+    return 'Unable to connect. Please check your internet connection.'
+  }
+  
+  // Network errors (alternative)
+  if (error instanceof Error && error.message.includes('NetworkError')) {
+    return 'Connection lost. Please check your network and try again.'
+  }
+  
+  // All other errors
+  return 'Something went wrong. Please try again.'
 }
 
 export default function Login() {
   const navigate = useNavigate()
 
-  const [email, setEmail]       = useState('')
-  const [password, setPassword] = useState('')
-  const [showPwd, setShowPwd]   = useState(false)
-  const [loading, setLoading]   = useState(false)
+  const [identifier, setIdentifier] = useState('')
+  const [password, setPassword]   = useState('')
+  const [showPwd, setShowPwd]     = useState(false)
+  const [loading, setLoading]     = useState(false)
   const [navigating, setNavigating] = useState(false)
-  const [apiError, setApiError] = useState('')
-  const [errors, setErrors]     = useState<Record<string, string>>({})
+  const [apiError, setApiError]   = useState('')
+  const [errors, setErrors]       = useState<Record<string, string>>({})
   const [sideImage, setSideImage] = useState(
     'https://images.unsplash.com/photo-1625246333195-78d9c38ad449?w=900&q=90'
   )
@@ -37,11 +55,11 @@ export default function Login() {
   const validate = () => {
     const e: Record<string, string> = {}
 
-    // Email
-    if (!email.trim()) {
-      e.email = 'Email is required'
-    } else if (!isValidEmail(email.trim())) {
-      e.email = 'Enter a valid email address (e.g. you@example.com)'
+    // Identifier (email or phone)
+    if (!identifier.trim()) {
+      e.identifier = 'Email or phone number is required'
+    } else if (!isValidIdentifier(identifier.trim())) {
+      e.identifier = 'Enter a valid email or Nigerian phone number (e.g. 08012345678)'
     }
 
     // Password
@@ -63,7 +81,7 @@ export default function Login() {
     setLoading(true)
 
     try {
-      const res = await authService.login({ email, password })
+      const res = await authService.login({ identifier, password })
       authService.saveSession(res)
 
       const role: UserRole = res.user.role as UserRole
@@ -73,16 +91,14 @@ export default function Login() {
 
       // Small delay lets the splash render before navigate fires
       setTimeout(() => {
-        if      (role === 'farmer') navigate('/farmer/dashboard')
-        else if (role === 'buyer')  navigate('/buyer/dashboard')
-        else if (role === 'seller') navigate('/seller/dashboard')
-        else                        navigate('/admin/dashboard')
+        if      (role === 'farmer') navigate('/farmer/dashboard', { replace: true })
+        else if (role === 'buyer')  navigate('/buyer/dashboard', { replace: true })
+        else if (role === 'seller') navigate('/seller/dashboard', { replace: true })
+        else                        navigate('/admin/dashboard', { replace: true })
       }, 80)
 
     } catch (err: unknown) {
-      setApiError(
-        err instanceof Error ? err.message : 'Invalid email or password.'
-      )
+      setApiError(getUserFriendlyError(err))
       setLoading(false)
     }
   }
@@ -225,21 +241,21 @@ export default function Login() {
               <div className={styles.fields}>
 
                 <div className={styles.fieldGroup}>
-                  <label className={styles.fieldLabel}>Email Address</label>
+                  <label className={styles.fieldLabel}>Email or Phone Number</label>
                   <div className={styles.fieldInputWrap}>
                     <span className={styles.fieldInputIcon}>
                       <BsEnvelope size={14} />
                     </span>
                     <input
-                      className={`${styles.fieldInput} ${errors['email'] ? styles.fieldError : ''}`}
-                      type="email"
-                      placeholder="you@example.com"
-                      value={email}
-                      onChange={e => setEmail(e.target.value)}
-                      autoComplete="email"
+                      className={`${styles.fieldInput} ${errors['identifier'] ? styles.fieldError : ''}`}
+                      type="text"
+                      placeholder="08012345678 or you@example.com"
+                      value={identifier}
+                      onChange={e => setIdentifier(e.target.value)}
+                      autoComplete="username"
                     />
                   </div>
-                  {err('email')}
+                  {err('identifier')}
                 </div>
 
                 <div className={styles.fieldGroup}>

@@ -78,7 +78,7 @@ export default function Register() {
     email: "",
     phone: "",
     password: "",
-    location: "", // Add location field
+    location: "",
   });
 
   useEffect(() => {
@@ -115,13 +115,15 @@ export default function Register() {
     const pwd = form.password;
     if (!pwd) {
       e.password = "Password is required";
-    } else if (pwd.length < 6) {
-      e.password = "Password must be at least 6 characters";
+    } else if (pwd.length < 8) {
+      // The API rejects anything under 8 (MIN_PASSWORD_LENGTH). Accepting 6
+      // here meant a 6- or 7-character password passed client validation and
+      // then failed at the server with a duplicate-looking error.
+      e.password = "Password must be at least 8 characters";
     } else if (!/[0-9]/.test(pwd)) {
       e.password = "Password must include at least one number";
     }
 
-    // Validate location
     if (!form.location) {
       e.location = "Please select your location in Akure";
     }
@@ -133,8 +135,13 @@ export default function Register() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setApiError("");
-    if (!validate()) return;
+
+    if (!validate()) {
+      return;
+    }
+
     setLoading(true);
+
     try {
       const role = tab;
       const payload: RegisterPayload = {
@@ -145,19 +152,24 @@ export default function Register() {
         role,
         location: form.location,
       };
+
       const res = await authService.register(payload);
+
       authService.saveSession(res);
       const userRole = res.user.role as UserRole;
 
-      // Redirect based on role
+      // Redirect based on role with replace: true
       if (userRole === "farmer") {
-        navigate("/farmer");
+        navigate("/farmer/dashboard", { replace: true });
       } else if (userRole === "buyer") {
-        navigate("/buyer");
+        navigate("/buyer/dashboard", { replace: true });
+      } else if (userRole === "seller") {
+        navigate("/seller/dashboard", { replace: true });
       } else {
-        navigate("/farmer"); // fallback
+        navigate("/farmer/dashboard", { replace: true });
       }
     } catch (err: unknown) {
+      console.error('Registration error:', err);
       setApiError(
         err instanceof Error
           ? err.message
@@ -355,9 +367,6 @@ export default function Register() {
                   />
                 </div>
                 {err("location")}
-                {/* <div className={styles.fieldHint}>
-    This helps us find nearby sellers and buyers for you
-  </div> */}
               </div>
 
               <div className={styles.fieldGroup}>

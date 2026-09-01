@@ -4,6 +4,7 @@ import { GiCorn, GiTomato, GiChiliPepper, GiPlantRoots } from 'react-icons/gi';
 import { useToast } from '../../context/ToastContext';
 import { CustomSelect } from '../CustomSelect/CustomSelect';
 import { AKURE_AREAS } from '../../services/marketService';
+import { BASE_URL } from '../../services/apiConfig';
 import styles from './Onboarding.module.css';
 
 type CropType = 'Maize' | 'Cassava' | 'Tomato' | 'Pepper';
@@ -49,7 +50,7 @@ export function BuyerOnboardingModal({ isOpen, onComplete }: BuyerOnboardingModa
     setLoading(true);
     try {
       const token = localStorage.getItem('agf_token');
-      await fetch(`${import.meta.env.VITE_API_URL}/buyers/onboarding`, {
+      const res = await fetch(`${BASE_URL}/buyers/onboarding`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -61,7 +62,11 @@ export function BuyerOnboardingModal({ isOpen, onComplete }: BuyerOnboardingModa
           purchaseFrequency: formData.frequency,
         }),
       });
-      
+
+      // The response used to be ignored, so a failed save still showed
+      // "Preferences saved!" and the user never knew to retry.
+      if (!res.ok) throw new Error('Failed to save preferences');
+
       localStorage.setItem('agroflow_buyer_preferences', JSON.stringify(formData));
       addToast('Preferences saved! We\'ll personalize your marketplace.', 'success');
       onComplete();

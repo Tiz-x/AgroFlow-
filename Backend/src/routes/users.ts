@@ -72,7 +72,28 @@ router.post('/', protect, adminOnly, async (req: AuthRequest, res: Response) => 
       return
     }
 
-    const existing = await prisma.user.findUnique({ where: { email } })
+    // This handler had drifted from /auth/register and enforced none of its
+    // rules. An unrecognised role produced an account with no profile row that
+    // satisfied no authorization check, and a mixed-case email could never log
+    // in because login lowercases the identifier before looking it up.
+    const validRoles = ['farmer', 'buyer', 'seller', 'admin']
+    if (!validRoles.includes(role)) {
+      res.status(400).json({ error: 'Role must be one of: farmer, buyer, seller, admin' })
+      return
+    }
+
+    const cleanEmail = String(email).trim().toLowerCase()
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      res.status(400).json({ error: 'Please enter a valid email address' })
+      return
+    }
+
+    if (typeof password !== 'string' || password.length < 8) {
+      res.status(400).json({ error: 'Password must be at least 8 characters' })
+      return
+    }
+
+    const existing = await prisma.user.findUnique({ where: { email: cleanEmail } })
     if (existing) {
       res.status(400).json({ error: 'Email already registered' })
       return
@@ -80,27 +101,32 @@ router.post('/', protect, adminOnly, async (req: AuthRequest, res: Response) => 
 
     const hashedPassword = await bcrypt.hash(password, 12)
 
-    const user = await prisma.user.create({
-      data: {
-        name,
-        email,
-        password: hashedPassword,
-        role,
-        phone:    phone    || null,
-        location: location || null,
-      },
-    })
-
-    // Create role profile
-    if (role === 'farmer') {
-      await prisma.farmer.create({
-        data: { userId: user.id, location: location || '' },
+    // User and profile are created together so a failed profile insert cannot
+    // leave an orphaned account behind.
+    const user = await prisma.$transaction(async (tx) => {
+      const created = await tx.user.create({
+        data: {
+          name,
+          email:    cleanEmail,
+          password: hashedPassword,
+          role,
+          phone:    phone    || null,
+          location: location || null,
+        },
       })
-    } else if (role === 'buyer') {
-      await prisma.buyer.create({ data: { userId: user.id } })
-    } else if (role === 'seller') {
-      await prisma.seller.create({ data: { userId: user.id } })
-    }
+
+      if (role === 'farmer') {
+        await tx.farmer.create({
+          data: { userId: created.id, location: location || '' },
+        })
+      } else if (role === 'buyer') {
+        await tx.buyer.create({ data: { userId: created.id } })
+      } else if (role === 'seller') {
+        await tx.seller.create({ data: { userId: created.id } })
+      }
+
+      return created
+    })
 
     res.status(201).json({
       message: 'User created successfully',
@@ -127,9 +153,26 @@ router.patch('/:id/status', protect, adminOnly, async (req: AuthRequest, res: Re
       return
     }
 
+    // Suspending yourself locks you out of the admin panel, and suspending the
+    // last admin leaves nobody who can undo it.
+    const targetId = String(req.params.id)
+    if (targetId === req.user!.id) {
+      res.status(400).json({ error: 'You cannot change your own account status' })
+      return
+    }
+
+    // Without an explicit select, Prisma returns the whole row — including the
+    // bcrypt password hash — straight to the admin panel.
     const user = await prisma.user.update({
-      where: { id: String(req.params.id) },
+      where: { id: targetId },
       data:  { status },
+      select: {
+        id:     true,
+        name:   true,
+        email:  true,
+        role:   true,
+        status: true,
+      },
     })
 
     res.json({ message: `User ${status} successfully`, user })

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useImperativeHandle, forwardRef } from "react";
 import { useToast } from "../../context/ToastContext";
+import { BASE_URL } from "../../services/apiConfig";
 
 export interface VoiceRecorderHandle {
   startRecording: () => void;
@@ -147,12 +148,8 @@ export const VoiceRecorder = forwardRef<
         const formData = new FormData();
         formData.append("audio", audioBlob, "recording.webm");
 
-        console.log("🎤 Sending voice to backend...");
-        console.log("🎤 Audio size:", audioBlob.size, "bytes");
-        console.log("🎤 Token:", token ? "Present" : "Missing");
-
         const res = await fetch(
-          `${import.meta.env.VITE_API_URL}/voice/process`,
+          `${BASE_URL}/voice/process`,
           {
             method: "POST",
             headers: { Authorization: `Bearer ${token}` },
@@ -161,15 +158,6 @@ export const VoiceRecorder = forwardRef<
         );
 
         const data = await res.json();
-        
-        // ── TEMPORARY LOGGING ──
-        console.log("🎤 Voice response:", JSON.stringify(data, null, 2));
-        console.log("🎤 Status:", res.status);
-        console.log("🎤 Success:", data.success);
-        console.log("🎤 Response text:", data.response);
-        console.log("🎤 Detected language:", data.detectedLanguage);
-        console.log("🎤 Original text:", data.originalText);
-        // ── END TEMPORARY LOGGING ──
 
         if (data.success) {
           addToast(`🗣️ "${data.originalText}"`, "success");

@@ -1,4 +1,4 @@
-import { Router, Response } from 'express'
+import { Router, Request, Response } from 'express'
 import multer from 'multer'
 import { v2 as cloudinary } from 'cloudinary'
 import { protect, AuthRequest } from '../middleware/auth'
@@ -28,15 +28,14 @@ const upload = multer({
 })
 
 // ── GET ALL CONTENT IMAGES ────────────────────────
-router.get('/', async (_req, res: Response) => {
+router.get('/', async (req: Request, res: Response) => {
   try {
-    const images = await prisma.contentImage.findMany({
-      orderBy: { page: 'asc' },
-    })
+    const images = await prisma.contentImage.findMany()
     res.json({ images })
   } catch (error) {
-    console.error('Get content error:', error)
-    res.status(500).json({ error: 'Failed to fetch content images' })
+    // Table might not exist or be empty — return empty array instead of 500
+    console.error('Content fetch error:', error)
+    res.json({ images: [] })
   }
 })
 
@@ -90,6 +89,7 @@ router.post(
       })
     } catch (error) {
       console.error('Upload content error:', error)
+      console.error('Upload content error DETAILS:', JSON.stringify(error, null, 2))
       res.status(500).json({ error: 'Failed to upload image' })
     }
   }
@@ -175,6 +175,7 @@ router.post('/seed', protect, adminOnly, async (_req: AuthRequest, res: Response
     res.json({ message: 'Default images seeded successfully' })
   } catch (error) {
     console.error('Seed content error:', error)
+    console.error('Seed content error DETAILS:', JSON.stringify(error, null, 2))
     res.status(500).json({ error: 'Failed to seed content images' })
   }
 })

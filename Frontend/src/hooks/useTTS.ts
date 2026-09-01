@@ -1,6 +1,5 @@
 import { useCallback, useRef } from 'react';
-
-const BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:5000/api';
+import { BASE_URL } from '../services/apiConfig';
 
 export function useTTS() {
   const audioRef = useRef<HTMLAudioElement | null>(null);

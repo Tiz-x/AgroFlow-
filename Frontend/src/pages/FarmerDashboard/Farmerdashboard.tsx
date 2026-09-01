@@ -1,6 +1,12 @@
 import { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { RiStore3Line, RiLeafFill, RiRobot2Fill, RiMicLine } from "react-icons/ri";
+import { 
+  RiStore3Line, 
+  RiLeafFill, 
+  RiRobot2Fill, 
+  RiMicLine,
+  RiSeedlingLine,
+} from "react-icons/ri";
 import { BsPerson, BsPencilSquare } from "react-icons/bs";
 import {
   MdOutlineLogout,
@@ -25,8 +31,10 @@ import { VoiceRecorder } from "../../components/VoiceRecorder/VoiceRecorder";
 import type { VoiceRecorderHandle } from "../../components/VoiceRecorder/VoiceRecorder";
 import { VoiceWave } from "../../components/VoiceWave/VoiceWave";
 import { useTTS } from "../../hooks/useTTS";
+import { apiFetch } from "../../services/marketService";
+import { BASE_URL } from "../../services/apiConfig";
 
-// ── NEW: Onboarding ──────────────────────────────────────────────────────────
+// ──Onboarding ────────────────────────────────
 import {
   FarmerOnboarding,
   shouldShowOnboarding,
@@ -57,24 +65,33 @@ interface ChatSession {
 
 // ── API ───────────────────────────────────────────────────────────────────────
 
-const BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:5000/api";
-
 async function fetchAIResponse(message: string): Promise<string> {
   const token = authService.getToken();
   if (!token) throw new Error("Not authenticated");
 
-  const res = await fetch(`${BASE_URL}/ai/chat`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({ message }),
-  });
+  try {
+    const res = await apiFetch(`${BASE_URL}/ai/chat`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ message }),
+    });
 
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error ?? "AI request failed");
-  return data.aiText as string;
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error ?? data.message ?? "Something went wrong");
+    }
+    return data.aiText as string;
+  } catch (error: any) {
+    // Handle authentication errors
+    if (error.message === "Not authenticated") {
+      throw new Error("Your session has expired. Please log in again.");
+    }
+    // Re-throw apiFetch errors (they're already user-friendly)
+    throw error;
+  }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -91,11 +108,19 @@ const firstName = user.name?.split(" ")[0] ?? "Farmer";
 function newId() {
   return Math.random().toString(36).slice(2);
 }
+
 function nowTime() {
   return new Date().toLocaleTimeString("en-NG", {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function getGreeting() {
+  const hour = new Date().getHours();
+  if (hour < 12) return "Good morning";
+  if (hour < 17) return "Good afternoon";
+  return "Good evening";
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -139,6 +164,18 @@ export default function FarmerChat() {
     { icon: <BsTruck size={13} />, text: "Upcoming deliveries" },
   ];
 
+  // ── Prevent back button from closing the app ──────────────────────────
+  useEffect(() => {
+    window.history.pushState(null, '', window.location.href);
+    
+    const handlePopState = () => {
+      window.history.pushState(null, '', window.location.href);
+    };
+    
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, typing]);
@@ -147,10 +184,9 @@ export default function FarmerChat() {
     loadSessions();
   }, []);
 
-  // ── Onboarding useEffect — only handles choice modal logic ────────────────
+  // ── Onboarding useEffect ────────────────────────────────────────────────────
   useEffect(() => {
     if (!showOnboarding) {
-      // Not showing onboarding — check if we need the choice modal
       const justLoggedIn = authService.consumeJustLoggedIn();
       if (justLoggedIn) setShowChoiceModal(true);
     }
@@ -270,7 +306,7 @@ export default function FarmerChat() {
     const userVoiceMsg: Message = {
       id: userMsgId,
       role: "user",
-      text: "🎤 Voice message",
+      text: "Voice message",
       time: nowTime(),
       isVoice: true,
       voiceLanguage: lang,
@@ -304,7 +340,7 @@ export default function FarmerChat() {
       await chatService.saveMessage(
         sessionId,
         "user",
-        originalText ?? "🎤 Voice message",
+        originalText ?? "Voice message",
         { isVoice: true, voiceText: originalText ?? "", language: lang }
       );
 
@@ -320,7 +356,7 @@ export default function FarmerChat() {
         const updated = [...messages, userVoiceMsg, aiMsg];
         if (idx !== -1) {
           const arr = [...prev];
-          arr[idx] = { ...arr[idx], messages: updated, preview: "🎤 Voice message", date: "Today" };
+          arr[idx] = { ...arr[idx], messages: updated, preview: "Voice message", date: "Today" };
           const [moved] = arr.splice(idx, 1);
           return [moved, ...arr];
         }
@@ -328,7 +364,7 @@ export default function FarmerChat() {
           {
             id: sessionId!,
             title: "Voice message",
-            preview: "🎤 Voice message",
+            preview: "Voice message",
             date: "Today",
             messages: updated,
           },
@@ -411,11 +447,14 @@ export default function FarmerChat() {
         text:
           err.message === "Not authenticated"
             ? "Your session has expired. Please log in again."
-            : "Sorry, I'm having trouble connecting right now. Please try again in a moment.",
+            : "Something went wrong. Please try again.",
         time: nowTime(),
       };
       setMessages((prev) => [...prev, errMsg]);
-      addToast(err.message || "Failed to send message", "error");
+      
+      // Use the error message from apiFetch (already user-friendly)
+      const errorMessage = err.message || "Something went wrong. Please try again.";
+      addToast(errorMessage, "error");
     } finally {
       setTyping(false);
       inputRef.current?.focus();
@@ -451,7 +490,7 @@ export default function FarmerChat() {
     addToast("Switched to Seller Mode", "success");
   };
 
-  // ── RENDER: Onboarding takes priority — shows immediately ────────────────
+  // ── RENDER: Onboarding takes priority ──────────────────────────────────────
   if (showOnboarding) {
     return <FarmerOnboarding onComplete={handleOnboardingComplete} />;
   }
@@ -469,7 +508,7 @@ export default function FarmerChat() {
                 <div className={styles.choiceModalIcon}>
                   <RiLeafFill size={36} color="#2d6a35" />
                 </div>
-                <h2 className={styles.choiceModalTitle}>Welcome back, {firstName}! 👨‍🌾</h2>
+                <h2 className={styles.choiceModalTitle}>Welcome back, {firstName}</h2>
                 <p className={styles.choiceModalSubtitle}>What would you like to do today?</p>
               </div>
               <div className={styles.choiceModalOptions}>
@@ -611,19 +650,8 @@ export default function FarmerChat() {
               <div className={styles.profileCard}>
                 <div className={styles.profileAvatar}>{initials}</div>
                 <div className={styles.profileName}>{user.name}</div>
-                <div className={styles.profileBadge}>🌾 Farmer</div>
-                <div className={styles.profileStats}>
-                  {[
-                    { val: "4", label: "Crops" },
-                    { val: "12", label: "Harvests" },
-                    { val: "8", label: "Deliveries" },
-                    { val: "98%", label: "On-Time" },
-                  ].map(({ val, label }) => (
-                    <div key={label} className={styles.profileStat}>
-                      <div className={styles.profileStatVal}>{val}</div>
-                      <div className={styles.profileStatLabel}>{label}</div>
-                    </div>
-                  ))}
+                <div className={styles.profileBadge}>
+                  <RiSeedlingLine size={12} /> Farmer
                 </div>
               </div>
               <div className={styles.profileForm}>
@@ -673,7 +701,7 @@ export default function FarmerChat() {
                     <div className={styles.emptyOrb}>
                       <RiRobot2Fill size={36} style={{ color: "#2d6a35" }} />
                     </div>
-                    <h2 className={styles.emptyTitle}>Good morning, {firstName} 👋</h2>
+                    <h2 className={styles.emptyTitle}>{getGreeting()}, {firstName}</h2>
                     <p className={styles.emptySubtitle}>
                       I'm your AgroFlow AI assistant. Ask me anything about your
                       crops, harvest timing, soil health, weather, or deliveries.

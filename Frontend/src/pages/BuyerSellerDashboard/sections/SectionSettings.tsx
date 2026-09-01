@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useToast } from "../../../context/ToastContext";
+import { NotificationToggle } from "../../../components/NotificationToggle/NotificationToggle";
 import styles from "../BuyerSellerDashboard.module.css";
 
 interface SectionSettingsProps {
@@ -11,7 +12,7 @@ export function SectionSettings({ user, onUpdate }: SectionSettingsProps) {
   const [profileForm, setProfileForm] = useState({
     fullName: user.name || "",
     email: user.email || "",
-    phone: user.phone || "+234 801 234 5678",
+    phone: user.phone || "",
     location: user.location || "Ijapo Estate, Akure",
     bio: user.bio || "Agricultural entrepreneur passionate about fresh produce",
   });
@@ -20,10 +21,16 @@ export function SectionSettings({ user, onUpdate }: SectionSettingsProps) {
 
   const handleProfileUpdate = async () => {
     setSaving(true);
-    await new Promise((r) => setTimeout(r, 800));
-    onUpdate({ ...user, ...profileForm });
-    setSaving(false);
-    addToast("Profile updated successfully!", "success");
+    try {
+      // Simulate API call
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      onUpdate({ ...user, ...profileForm });
+      addToast("Profile updated successfully!", "success");
+    } catch (error) {
+      addToast("Failed to update profile", "error");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -33,6 +40,7 @@ export function SectionSettings({ user, onUpdate }: SectionSettingsProps) {
         <div className={styles.pageSubtitle}>Manage your account preferences</div>
       </div>
 
+      {/* Personal Information Card */}
       <div className={styles.settingsCard}>
         <div className={styles.settingsSection}>
           <h3 className={styles.settingsSectionTitle}>Personal Information</h3>
@@ -46,6 +54,7 @@ export function SectionSettings({ user, onUpdate }: SectionSettingsProps) {
                 onChange={(e) =>
                   setProfileForm({ ...profileForm, fullName: e.target.value })
                 }
+                placeholder="Enter your full name"
               />
             </div>
             <div className={styles.fieldGroup}>
@@ -57,6 +66,7 @@ export function SectionSettings({ user, onUpdate }: SectionSettingsProps) {
                 onChange={(e) =>
                   setProfileForm({ ...profileForm, email: e.target.value })
                 }
+                placeholder="Enter your email address"
               />
             </div>
             <div className={styles.fieldGroup}>
@@ -68,6 +78,7 @@ export function SectionSettings({ user, onUpdate }: SectionSettingsProps) {
                 onChange={(e) =>
                   setProfileForm({ ...profileForm, phone: e.target.value })
                 }
+                placeholder="Enter your phone number"
               />
             </div>
             <div className={styles.fieldGroup}>
@@ -79,6 +90,7 @@ export function SectionSettings({ user, onUpdate }: SectionSettingsProps) {
                 onChange={(e) =>
                   setProfileForm({ ...profileForm, location: e.target.value })
                 }
+                placeholder="Enter your location"
               />
             </div>
             <div className={styles.fieldGroup}>
@@ -100,6 +112,16 @@ export function SectionSettings({ user, onUpdate }: SectionSettingsProps) {
             >
               {saving ? "Saving..." : "Save Changes"}
             </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Notifications Card - Moved to the very bottom */}
+      <div className={styles.settingsCard} style={{ marginTop: 16 }}>
+        <div className={styles.settingsSection}>
+          <h3 className={styles.settingsSectionTitle}>Notifications</h3>
+          <div style={{ marginTop: 8 }}>
+            <NotificationToggle />
           </div>
         </div>
       </div>

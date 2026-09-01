@@ -3,6 +3,7 @@ import { RiLeafFill } from 'react-icons/ri';
 import { GiCorn, GiTomato, GiChiliPepper, GiPlantRoots } from 'react-icons/gi';
 import { MdCheckCircle } from 'react-icons/md';
 import { useToast } from '../../context/ToastContext';
+import { BASE_URL } from '../../services/apiConfig';
 import styles from './Onboarding.module.css';
 
 type CropType = 'Maize' | 'Cassava' | 'Tomato' | 'Pepper';
@@ -57,7 +58,7 @@ export function FarmerOnboardingModal({ isOpen, onComplete }: FarmerOnboardingMo
     setLoading(true);
     try {
       const token = localStorage.getItem('agf_token');
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/farmers/onboarding`, {
+      const res = await fetch(`${BASE_URL}/farmers/onboarding`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

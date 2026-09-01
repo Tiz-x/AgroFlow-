@@ -1,0 +1,47 @@
+{
+  "name": "AgroFlow+",
+  "short_name": "AgroFlow+",
+  "description": "AI-powered agricultural marketplace for Nigerian farmers",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f1f11",
+  "theme_color": "#a8d832",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icons/favicon-96x96.png",
+      "sizes": "96x96",
+      "type": "image/png"
+    },
+    {
+      "src": "/icons/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["food", "shopping", "productivity"],
+  "screenshots": [],
+  "shortcuts": [
+    {
+      "name": "Marketplace",
+      "short_name": "Market",
+      "description": "Browse fresh produce",
+      "url": "/buyer/dashboard",
+      "icons": [{ "src": "/icons/icon-96x96.png", "sizes": "96x96" }]
+    },
+    {
+      "name": "AI Assistant",
+      "short_name": "Ask Agro",
+      "description": "Get farming advice",
+      "url": "/farmer/dashboard",
+      "icons": [{ "src": "/icons/icon-96x96.png", "sizes": "96x96" }]
+    }
+  ]
+}

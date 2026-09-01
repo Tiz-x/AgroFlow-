@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect} from "react";
 import { useNavigate } from "react-router-dom";
 import {
   RiLeafFill,
@@ -11,6 +11,7 @@ import {
   RiCheckDoubleLine,
   RiAddCircleLine,
   RiBellLine,
+  RiDashboardLine,
 } from "react-icons/ri";
 import { MdOutlineMenu, MdClose } from "react-icons/md";
 import { FaStore } from "react-icons/fa";
@@ -22,10 +23,14 @@ import {
   type Request,
   type Order,
 } from "../../services/marketService";
+import { sellerService } from "../../services/sellerService";
 import { authService } from "../../services/authService";
 import { useToast } from "../../context/ToastContext";
 import { ConfirmModal } from "../../components/ConfirmModal/ConfirmModal";
 import { LoadingButton } from "../../components/LoadingButton/LoadingButton";
+import PageLoader from "../../components/PageLoader/PageLoader";
+import { VerificationModal } from "../../components/VerificationModal/VerificationModal";
+import { SectionDashboard } from "../BuyerSellerDashboard/sections/SectionDashboard";
 import { SectionMyStore } from "../BuyerSellerDashboard/sections/SectionMyStore";
 import { SectionMatches } from "../BuyerSellerDashboard/sections/SectionMatches";
 import { SectionRequests } from "../BuyerSellerDashboard/sections/SectionRequests";
@@ -37,6 +42,7 @@ import FloatingAI from "../../components/FloatingAI/FloatingAI";
 import styles from "../BuyerSellerDashboard/BuyerSellerDashboard.module.css";
 
 type Section =
+  | "dashboard"
   | "myStore"
   | "sell"
   | "requests"
@@ -44,6 +50,8 @@ type Section =
   | "notifications"
   | "settings"
   | "orders";
+
+const SECTION_STORAGE_KEY = "seller_section";
 
 export default function SellerDashboard() {
   const navigate = useNavigate();
@@ -66,8 +74,24 @@ export default function SellerDashboard() {
       .map((n: string) => n[0])
       .join("")
       .toUpperCase() ?? "SE";
-  const [section, setSection] = useState<Section>("myStore");
+  
+  // ── Save section to sessionStorage and restore on mount ──────────────
+  const [section, setSection] = useState<Section>(() => {
+    const saved = sessionStorage.getItem(SECTION_STORAGE_KEY);
+    if (saved && ["dashboard", "myStore", "sell", "requests", "matches", "notifications", "settings", "orders"].includes(saved)) {
+      return saved as Section;
+    }
+    return "dashboard";
+  });
+
+  // ── Wrapped setSection that persists to sessionStorage ──────────────
+  const handleSetSection = (s: Section) => {
+    sessionStorage.setItem(SECTION_STORAGE_KEY, s);
+    setSection(s);
+  };
+
   const [sidebarOpen, setSidebar] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [matches, setMatches] = useState<Match[]>([]);
   const [notifs, setNotifs] = useState<Notification[]>([]);
   const [myListings, setMyListings] = useState<Listing[]>([]);
@@ -81,10 +105,100 @@ export default function SellerDashboard() {
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
 
+  // ── Verification State ──────────────────────────────────────────────
+  const [showVerificationModal, setShowVerificationModal] = useState(false);
+  const [isVerified, setIsVerified] = useState(false);
+
+  // ── Prevent back button from closing the app ──────────────────────────
   useEffect(() => {
-    refresh();
+    window.history.pushState(null, '', window.location.href);
+    
+    const handlePopState = () => {
+      window.history.pushState(null, '', window.location.href);
+    };
+    
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
+  // ── Check verification status on load ──────────────────────────────
+  useEffect(() => {
+    const checkVerification = async () => {
+      try {
+        const status = await sellerService.getMyVerificationStatus();
+        if (status.seller?.verificationStatus === 'verified') {
+          setIsVerified(true);
+        }
+      } catch (error) {
+        console.error('Error checking verification:', error);
+      }
+    };
+    checkVerification();
+  }, []);
+
+  // ── Check verification and navigate ──────────────────────────────────
+  const checkVerificationAndNavigate = async (targetSection: Section) => {
+    // If it's not the sell section, just navigate
+    if (targetSection !== 'sell' && targetSection !== 'myStore') {
+      handleSetSection(targetSection);
+      return;
+    }
+
+    // If already verified, navigate
+    if (isVerified) {
+      handleSetSection(targetSection);
+      return;
+    }
+
+    try {
+      const status = await sellerService.getMyVerificationStatus();
+      
+      if (status.seller?.verificationStatus === 'verified') {
+        setIsVerified(true);
+        handleSetSection(targetSection);
+      } else if (status.seller?.verificationStatus === 'pending') {
+        setShowVerificationModal(true);
+      } else if (status.seller?.verificationStatus === 'rejected') {
+        setShowVerificationModal(true);
+      } else {
+        // Unverified - show prompt
+        setShowVerificationModal(true);
+      }
+    } catch (error) {
+      console.error('Error checking verification:', error);
+      // If error, still allow navigation (fallback)
+      handleSetSection(targetSection);
+    }
+  };
+
+  // ── Navigation handler ──────────────────────────────────────────────
+  const handleNavClick = (section: Section) => {
+    checkVerificationAndNavigate(section);
+  };
+
+  // ── INITIAL LOAD ──────────────────────────────────────────────
+  async function initialLoad() {
+    setLoading(true);
+    try {
+      const [matchesData, myListingsData, ordersData] = await Promise.all([
+        marketService.getMatches(),
+        marketService.getListingsBySeller(),
+        marketService.getOrders(),
+      ]);
+      setMatches(matchesData);
+      setMyListings(myListingsData);
+      setOrders(ordersData);
+      setNotifs(marketService.getNotifications(user.id));
+      setMyRequests([]);
+    } catch (err) {
+      console.error("Initial load error:", err);
+      addToast("Failed to load data", "error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // ── SILENT BACKGROUND REFRESH ────────────────────────────────
   async function refresh() {
     try {
       const [matchesData, myListingsData, ordersData] = await Promise.all([
@@ -102,6 +216,17 @@ export default function SellerDashboard() {
       addToast("Failed to refresh data", "error");
     }
   }
+
+  // ── Initial load + polling ──────────────────────────────────────
+  useEffect(() => {
+    initialLoad();
+
+    const interval = setInterval(() => {
+      refresh(); // silent — no loader
+    }, 30000);
+
+    return () => clearInterval(interval);
+  }, []);
 
   const unread = notifs.filter((n) => !n.read).length;
 
@@ -133,6 +258,11 @@ export default function SellerDashboard() {
     icon: React.ReactNode;
     badge?: number;
   }[] = [
+    {
+      id: "dashboard",
+      label: "Dashboard",
+      icon: <RiDashboardLine size={15} />,
+    },
     {
       id: "myStore",
       label: "My Store",
@@ -173,6 +303,11 @@ export default function SellerDashboard() {
 
   const bottomNavItems = [
     {
+      id: "dashboard",
+      label: "Home",
+      icon: <RiDashboardLine size={20} />,
+    },
+    {
       id: "myStore",
       label: "Store",
       icon: <FaStore size={20} />,
@@ -192,6 +327,8 @@ export default function SellerDashboard() {
       badge: orders.filter((o) => o.status === "placed").length,
     },
   ];
+
+  if (loading) return <PageLoader />;
 
   return (
     <>
@@ -271,7 +408,7 @@ export default function SellerDashboard() {
                 key={item.id}
                 className={`${styles.navItem} ${section === item.id ? styles.navItemActive : ""}`}
                 onClick={() => {
-                  setSection(item.id);
+                  handleNavClick(item.id);
                   setSidebar(false);
                 }}
               >
@@ -329,7 +466,7 @@ export default function SellerDashboard() {
             <div className={styles.topbarRight}>
               <button
                 className={styles.topbarIconBtn}
-                onClick={() => setSection("notifications")}
+                onClick={() => handleNavClick("notifications")}
               >
                 <RiBellLine size={15} />
                 {unread > 0 && <div className={styles.notifBadge} />}
@@ -341,6 +478,14 @@ export default function SellerDashboard() {
           </div>
 
           <div className={styles.content}>
+            {section === "dashboard" && (
+              <SectionDashboard
+                listings={myListings}
+                orders={orders}
+                requests={myRequests}
+                matches={matches}
+              />
+            )}
             {section === "myStore" && (
               <SectionMyStore listings={myListings} onRefresh={refresh} />
             )}
@@ -349,7 +494,7 @@ export default function SellerDashboard() {
                 user={user}
                 onSuccess={() => {
                   refresh();
-                  setSection("myStore");
+                  handleSetSection("myStore");
                   addToast("Listing posted successfully!", "success");
                 }}
               />
@@ -395,7 +540,7 @@ export default function SellerDashboard() {
                 <button
                   key={item.id}
                   className={`${styles.bottomNavItem} ${section === item.id ? styles.bottomNavItemActive : ""}`}
-                  onClick={() => setSection(item.id as Section)}
+                  onClick={() => handleNavClick(item.id as Section)}
                 >
                   <div className={styles.bottomNavIcon}>
                     {item.icon}
@@ -412,6 +557,23 @@ export default function SellerDashboard() {
           </div>
         </div>
       </div>
+
+      {/* ── Verification Modal ────────────────────────────────────────── */}
+      <VerificationModal
+        isOpen={showVerificationModal}
+        onClose={() => {
+          setShowVerificationModal(false);
+        }}
+        onVerified={() => {
+          setIsVerified(true);
+          handleSetSection('sell');
+          addToast('Verification complete! You can now post listings.', 'success');
+        }}
+        onGoToSettings={() => {
+          setShowVerificationModal(false);
+          handleSetSection('settings');
+        }}
+      />
 
       <FloatingAI />
     </>

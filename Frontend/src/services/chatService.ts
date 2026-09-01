@@ -1,6 +1,5 @@
 import { authService } from './authService'
-
-const BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:5000/api"
+import { BASE_URL } from './apiConfig'
 
 export interface ChatMessage {
   id: string
@@ -24,20 +23,51 @@ async function request(endpoint: string, options?: RequestInit) {
   const token = authService.getToken()
   if (!token) throw new Error('Not authenticated')
   
-  const res = await fetch(`${BASE_URL}/chat${endpoint}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}`,
-      ...options?.headers
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 15000) // 15 second timeout
+
+  try {
+    const res = await fetch(`${BASE_URL}/chat${endpoint}`, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+        ...options?.headers
+      }
+    })
+    clearTimeout(timeout)
+    
+    if (!res.ok) {
+      const error = await res.json()
+      throw new Error(error.error || 'Something went wrong')
     }
-  })
-  
-  if (!res.ok) {
-    const error = await res.json()
-    throw new Error(error.error || 'Request failed')
+    return res.json()
+  } catch (error: any) {
+    clearTimeout(timeout)
+    
+    // Handle timeout
+    if (error.name === 'AbortError') {
+      throw new Error('Something went wrong. Please try again.')
+    }
+    
+    // Handle network errors
+    if (!navigator.onLine || error.message === 'Failed to fetch' || error.message === 'NetworkError') {
+      throw new Error('No internet connection. Please check your network and try again.')
+    }
+    
+    // Handle authentication errors
+    if (error.message === 'Not authenticated') {
+      throw new Error('Your session has expired. Please log in again.')
+    }
+    
+    // Re-throw if already user-friendly
+    if (error.message && !error.message.includes('fetch')) {
+      throw error
+    }
+    
+    throw new Error('Something went wrong. Please try again.')
   }
-  return res.json()
 }
 
 export const chatService = {

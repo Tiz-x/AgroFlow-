@@ -1,5 +1,11 @@
 import nodemailer from "nodemailer";
 
+if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
+  console.warn(
+    "⚠️  GMAIL_USER / GMAIL_APP_PASSWORD are not set — outgoing email is disabled",
+  );
+}
+
 const transporter = nodemailer.createTransport({
   host: "smtp.gmail.com",
   port: 465,
@@ -8,19 +14,47 @@ const transporter = nodemailer.createTransport({
     user: process.env.GMAIL_USER,
     pass: process.env.GMAIL_APP_PASSWORD,
   },
-  tls: {
-    rejectUnauthorized: false,
-  },
+  // `tls: { rejectUnauthorized: false }` used to sit here. It switches off
+  // certificate verification on the SMTP connection, which means the Gmail app
+  // password is handed to whatever server answers on the other end — the exact
+  // credential-theft scenario TLS verification exists to prevent. Gmail's
+  // certificate is valid, so nothing needed the override.
 });
 
 // ── TRANSPORTER VERIFICATION CHECK ──────────────────────────────
-transporter.verify((error, success) => {
+transporter.verify((error) => {
   if (error) {
     console.error("❌ Email transporter error:", error);
   } else {
     console.log("✅ Email transporter ready");
   }
 });
+
+/**
+ * Escape a value for interpolation into an HTML email body.
+ *
+ * Every template below dropped user-supplied text — names typed at
+ * registration, and the free-text `message` a buyer attaches to a purchase
+ * request — straight into the markup. A buyer could put a link or a fake
+ * "click here to confirm payment" block in their message and it rendered as
+ * live HTML inside an email that appears to come from AgroFlow+.
+ */
+function esc(value: unknown): string {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/**
+ * Strip CR/LF from anything interpolated into a header. Newlines in a subject
+ * line are the classic header-injection vector.
+ */
+function header(value: unknown): string {
+  return String(value ?? "").replace(/[\r\n]+/g, " ").trim();
+}
 
 function baseTemplate(content: string): string {
   return `
@@ -90,36 +124,36 @@ export async function sendMatchEmailToBuyer(data: {
   try {
     const content = `
       <span class="tag">🎉 Match Found!</span>
-      <h2>Great news, ${data.buyerName}!</h2>
+      <h2>Great news, ${esc(data.buyerName)}!</h2>
       <p>We found a seller for your produce request on AgroFlow+. Here are the details of your match:</p>
 
       <div class="card">
         <div class="card-row">
           <span class="card-label">Crop</span>
-          <span class="card-value"> ${data.cropType}</span>
+          <span class="card-value"> ${esc(data.cropType)}</span>
         </div>
         <div class="card-row">
           <span class="card-label">Quantity</span>
-          <span class="card-value"> ${data.quantity} kg</span>
+          <span class="card-value"> ${esc(data.quantity)} kg</span>
         </div>
         <div class="card-row">
           <span class="card-label">Seller Location</span>
-          <span class="card-value"> ${data.sellerLocation}, Akure</span>
+          <span class="card-value"> ${esc(data.sellerLocation)}, Akure</span>
         </div>
         <div class="card-row">
           <span class="card-label">Your Location</span>
-          <span class="card-value"> ${data.buyerLocation}, Akure</span>
+          <span class="card-value"> ${esc(data.buyerLocation)}, Akure</span>
         </div>
         <div class="card-row">
           <span class="card-label">Distance</span>
-          <span class="card-value">~${data.distance} km apart</span>
+          <span class="card-value">~${esc(data.distance)} km apart</span>
         </div>
       </div>
 
       <div class="contact-box">
         <p>Your matched seller:</p>
-        <p class="contact-name">${data.sellerName}</p>
-        <p style="margin-top:6px">📧 ${data.sellerEmail}${data.sellerPhone ? `<br>📞 ${data.sellerPhone}` : ""}</p>
+        <p class="contact-name">${esc(data.sellerName)}</p>
+        <p style="margin-top:6px">📧 ${esc(data.sellerEmail)}${data.sellerPhone ? `<br>📞 ${esc(data.sellerPhone)}` : ""}</p>
       </div>
 
       <div class="highlight">
@@ -128,11 +162,11 @@ export async function sendMatchEmailToBuyer(data: {
 
       <p>Log in to AgroFlow+ to view your full match details, accept or decline this match.</p>
     `;
-    
+
     await transporter.sendMail({
       from: `"AgroFlow+ Marketplace" <${process.env.GMAIL_USER}>`,
       to: data.buyerEmail,
-      subject: `🌽 Match Found! ${data.quantity}kg of ${data.cropType} available near you in Akure`,
+      subject: header(`🌽 Match Found! ${data.quantity}kg of ${data.cropType} available near you in Akure`),
       html: baseTemplate(content),
     });
   } catch (error) {
@@ -158,36 +192,36 @@ export async function sendMatchEmailToSeller(data: {
   try {
     const content = `
       <span class="tag">🤝 New Match!</span>
-      <h2>You've been matched, ${data.sellerName}!</h2>
+      <h2>You've been matched, ${esc(data.sellerName)}!</h2>
       <p>A buyer on AgroFlow+ has been matched to your produce listing. Here are the details:</p>
 
       <div class="card">
         <div class="card-row">
           <span class="card-label">Crop</span>
-          <span class="card-value">${data.cropType}</span>
+          <span class="card-value">${esc(data.cropType)}</span>
         </div>
         <div class="card-row">
           <span class="card-label">Quantity Requested</span>
-          <span class="card-value">${data.quantity} kg</span>
+          <span class="card-value">${esc(data.quantity)} kg</span>
         </div>
         <div class="card-row">
           <span class="card-label">Buyer Location</span>
-          <span class="card-value">📍 ${data.buyerLocation}, Akure</span>
+          <span class="card-value">📍 ${esc(data.buyerLocation)}, Akure</span>
         </div>
         <div class="card-row">
           <span class="card-label">Your Location</span>
-          <span class="card-value">📍 ${data.sellerLocation}, Akure</span>
+          <span class="card-value">📍 ${esc(data.sellerLocation)}, Akure</span>
         </div>
         <div class="card-row">
           <span class="card-label">Distance</span>
-          <span class="card-value">~${data.distance} km apart</span>
+          <span class="card-value">~${esc(data.distance)} km apart</span>
         </div>
       </div>
 
       <div class="contact-box">
         <p>Your matched buyer:</p>
-        <p class="contact-name">${data.buyerName}</p>
-        <p style="margin-top:6px">📧 ${data.buyerEmail}${data.buyerPhone ? `<br>📞 ${data.buyerPhone}` : ""}</p>
+        <p class="contact-name">${esc(data.buyerName)}</p>
+        <p style="margin-top:6px">📧 ${esc(data.buyerEmail)}${data.buyerPhone ? `<br>📞 ${esc(data.buyerPhone)}` : ""}</p>
       </div>
 
       <div class="highlight">
@@ -196,11 +230,11 @@ export async function sendMatchEmailToSeller(data: {
 
       <p>Log in to AgroFlow+ to accept or decline this match and view full details.</p>
     `;
-    
+
     await transporter.sendMail({
       from: `"AgroFlow+ Marketplace" <${process.env.GMAIL_USER}>`,
       to: data.sellerEmail,
-      subject: `🛒 New Buyer Matched! Someone wants ${data.quantity}kg of your ${data.cropType}`,
+      subject: header(`🛒 New Buyer Matched! Someone wants ${data.quantity}kg of your ${data.cropType}`),
       html: baseTemplate(content),
     });
   } catch (error) {
@@ -220,21 +254,21 @@ export async function sendWaitlistEmail(data: {
   try {
     const content = `
       <span class="tag">⏳ Added to Waitlist</span>
-      <h2>You're on the waitlist, ${data.buyerName}!</h2>
+      <h2>You're on the waitlist, ${esc(data.buyerName)}!</h2>
       <p>No sellers are currently available for your request, but don't worry — we've added you to the waitlist and will notify you the moment a match is found.</p>
 
       <div class="card">
         <div class="card-row">
           <span class="card-label">Crop Needed</span>
-          <span class="card-value">${data.cropType}</span>
+          <span class="card-value">${esc(data.cropType)}</span>
         </div>
         <div class="card-row">
           <span class="card-label">Quantity</span>
-          <span class="card-value">${data.quantity} kg</span>
+          <span class="card-value">${esc(data.quantity)} kg</span>
         </div>
         <div class="card-row">
           <span class="card-label">Your Location</span>
-          <span class="card-value">📍 ${data.location}, Akure</span>
+          <span class="card-value">📍 ${esc(data.location)}, Akure</span>
         </div>
       </div>
 
@@ -244,11 +278,11 @@ export async function sendWaitlistEmail(data: {
 
       <p>You can also browse the AgroFlow+ marketplace manually and send a request directly to any available seller.</p>
     `;
-    
+
     await transporter.sendMail({
       from: `"AgroFlow+ Marketplace" <${process.env.GMAIL_USER}>`,
       to: data.buyerEmail,
-      subject: `⏳ Waitlist Confirmed — We'll find you ${data.cropType} in Akure`,
+      subject: header(`⏳ Waitlist Confirmed — We'll find you ${data.cropType} in Akure`),
       html: baseTemplate(content),
     });
   } catch (error) {
@@ -270,28 +304,28 @@ export async function sendRequestEmailToSeller(data: {
   try {
     const content = `
       <span class="tag">📬 New Request</span>
-      <h2>New purchase request, ${data.sellerName}!</h2>
+      <h2>New purchase request, ${esc(data.sellerName)}!</h2>
       <p>A buyer on AgroFlow+ wants to purchase your produce. Log in to accept or decline.</p>
 
       <div class="card">
         <div class="card-row">
           <span class="card-label">Buyer</span>
-          <span class="card-value">${data.buyerName}</span>
+          <span class="card-value">${esc(data.buyerName)}</span>
         </div>
         <div class="card-row">
           <span class="card-label">Crop</span>
-          <span class="card-value">${data.cropType}</span>
+          <span class="card-value">${esc(data.cropType)}</span>
         </div>
         <div class="card-row">
           <span class="card-label">Quantity</span>
-          <span class="card-value">${data.quantity} kg</span>
+          <span class="card-value">${esc(data.quantity)} kg</span>
         </div>
         ${
           data.message
             ? `
         <div class="card-row">
           <span class="card-label">Message</span>
-          <span class="card-value">"${data.message}"</span>
+          <span class="card-value">"${esc(data.message)}"</span>
         </div>`
             : ""
         }
@@ -301,11 +335,11 @@ export async function sendRequestEmailToSeller(data: {
         <p>Log in to AgroFlow+ to accept or decline this request.</p>
       </div>
     `;
-    
+
     await transporter.sendMail({
       from: `"AgroFlow+ Marketplace" <${process.env.GMAIL_USER}>`,
       to: data.sellerEmail,
-      subject: `📬 New Request: ${data.buyerName} wants ${data.quantity}kg of your ${data.cropType}`,
+      subject: header(`📬 New Request: ${data.buyerName} wants ${data.quantity}kg of your ${data.cropType}`),
       html: baseTemplate(content),
     });
   } catch (error) {

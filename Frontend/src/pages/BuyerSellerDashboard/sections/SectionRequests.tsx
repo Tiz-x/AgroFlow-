@@ -8,28 +8,33 @@ import type { Request } from "../../../services/marketService";
 
 interface SectionRequestsProps {
   requests: Request[];
-  onAccept: (r: Request) => void;
-  onReject: (r: Request) => void;
+  onAccept: (r: Request) => Promise<void>;
+  onReject: (r: Request) => Promise<void>;
 }
 
 export function SectionRequests({ requests, onAccept, onReject }: SectionRequestsProps) {
   const [processingId, setProcessingId] = useState<string | null>(null);
+  const [actionType, setActionType] = useState<'accept' | 'reject' | null>(null);
 
   const handleAccept = async (req: Request) => {
     setProcessingId(req.id);
+    setActionType('accept');
     try {
       await onAccept(req);
     } finally {
       setProcessingId(null);
+      setActionType(null);
     }
   };
 
   const handleReject = async (req: Request) => {
     setProcessingId(req.id);
+    setActionType('reject');
     try {
       await onReject(req);
     } finally {
       setProcessingId(null);
+      setActionType(null);
     }
   };
 
@@ -47,10 +52,19 @@ export function SectionRequests({ requests, onAccept, onReject }: SectionRequest
     );
   }
 
+  // Sort requests: pending first, then by createdAt descending
+  const sortedRequests = [...requests].sort((a, b) => {
+    if (a.status === 'pending' && b.status !== 'pending') return -1;
+    if (a.status !== 'pending' && b.status === 'pending') return 1;
+    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+  });
+
   return (
     <div className={styles.requestsList}>
-      {requests.map((req) => {
+      {sortedRequests.map((req) => {
         const isProcessing = processingId === req.id;
+        const isLoadingAccept = isProcessing && actionType === 'accept';
+        const isLoadingReject = isProcessing && actionType === 'reject';
         
         return (
           <div key={req.id} className={styles.requestCard}>
@@ -62,10 +76,15 @@ export function SectionRequests({ requests, onAccept, onReject }: SectionRequest
                     ? styles.statusPending
                     : req.status === "accepted"
                     ? styles.statusAccepted
-                    : styles.statusRejected
+                    : req.status === "rejected"
+                    ? styles.statusRejected
+                    : styles.statusCompleted
                 }`}
               >
-                {req.status}
+                {req.status === "pending" && "Pending"}
+                {req.status === "accepted" && "Accepted"}
+                {req.status === "rejected" && "Declined"}
+                {req.status === "completed" && "Completed"}
               </div>
             </div>
             <div className={styles.requestDetails}>
@@ -84,20 +103,20 @@ export function SectionRequests({ requests, onAccept, onReject }: SectionRequest
             {req.status === "pending" && (
               <div className={styles.requestActions}>
                 <LoadingButton
-                  loading={isProcessing}
+                  loading={isLoadingAccept}
                   className={styles.acceptBtn}
                   onClick={() => handleAccept(req)}
                   disabled={isProcessing}
                 >
-                  <MdCheckCircle size={16} /> Accept
+                  <MdCheckCircle size={16} /> {isLoadingAccept ? 'Accepting...' : 'Accept'}
                 </LoadingButton>
                 <LoadingButton
-                  loading={isProcessing}
+                  loading={isLoadingReject}
                   className={styles.rejectBtn}
                   onClick={() => handleReject(req)}
                   disabled={isProcessing}
                 >
-                  <MdCancel size={16} /> Decline
+                  <MdCancel size={16} /> {isLoadingReject ? 'Declining...' : 'Decline'}
                 </LoadingButton>
               </div>
             )}

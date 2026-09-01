@@ -515,3 +515,9 @@
   background: #141F15;
   color: #A8D832;
 }
+
+.floatBtnDragging {
+  transform: scale(1.12);
+  box-shadow: 0 8px 32px rgba(45,106,53,0.35);
+  opacity: 0.92;
+}
